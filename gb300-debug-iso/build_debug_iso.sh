@@ -272,6 +272,8 @@ EOF
     )
     [ "$WITH_DCGM_DIAG" = 1 ] && nv+=(datacenter-gpu-manager-4-cuda13)
     apt_in install "${nv[@]}"
+    # nvfwupd installs into /opt/nvidia/nvfwupd/bin, which is not on PATH
+    ln -sf /opt/nvidia/nvfwupd/bin/nvfwupd "$ROOT/usr/local/bin/nvfwupd"
 
     # Package scripts build for whichever kernels they find; make sure everything is built for KVER.
     in_chroot dkms autoinstall -k "$KVER"
