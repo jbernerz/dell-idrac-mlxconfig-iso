@@ -77,11 +77,75 @@ mount_chroot() {
 
 umount_chroot() {
     local m
+    native_cc_off
     for m in run dev/pts dev sys proc; do
         if mountpoint -q "$ROOT/$m"; then umount -l "$ROOT/$m"; fi
     done
     MOUNTED=0
 }
+
+# On x86_64 build hosts the chroot's compiler runs under qemu emulation, which makes the DKMS
+# builds take hours. If the host has the same GCC and binutils build as the chroot (Ubuntu's
+# gcc-13-aarch64-linux-gnu / binutils-aarch64-linux-gnu: the same compiler, built to run on
+# x86_64), bind-mount its cc1, as and ld over the chroot's copies for the drivers stage. The
+# output is the same arm64 code. NATIVE_CC=0 turns this off.
+NATIVE_CC=${NATIVE_CC:-auto}
+NATIVE_CC_MOUNTS=()
+native_cc_on() {
+    [ "$(uname -m)" = x86_64 ] && [ "$NATIVE_CC" != 0 ] || return 0
+    [ ${#NATIVE_CC_MOUNTS[@]} -eq 0 ] || return 0                              # already on
+    in_chroot sh -c 'command -v gcc-13 && command -v as' > /dev/null || return 0  # no compiler yet
+    local cc1=/usr/libexec/gcc-cross/aarch64-linux-gnu/13/cc1 host_cc chroot_cc host_as chroot_as
+    if [ ! -x "$cc1" ] || [ ! -x /usr/bin/aarch64-linux-gnu-as ] || [ ! -x /usr/bin/aarch64-linux-gnu-ld.bfd ]; then
+        echo "  compiling under emulation (apt install gcc-13-aarch64-linux-gnu binutils-aarch64-linux-gnu to compile natively)"
+        return 0
+    fi
+    host_cc=$(aarch64-linux-gnu-gcc-13 --version | head -1 | sed 's/^[^(]*//')
+    chroot_cc=$(in_chroot gcc-13 --version | head -1 | sed 's/^[^(]*//')
+    host_as=$(aarch64-linux-gnu-as --version | head -1)
+    chroot_as=$(in_chroot as --version | head -1)
+    if [ "$host_cc" != "$chroot_cc" ] || [ "$host_as" != "$chroot_as" ]; then
+        echo "  compiling under emulation: host cross toolchain ($host_cc, $host_as) differs from the chroot's ($chroot_cc, $chroot_as)"
+        return 0
+    fi
+    if [ -e "$ROOT/lib64" ] || [ -e "$ROOT/usr/lib/x86_64-linux-gnu" ]; then
+        echo "  compiling under emulation: $ROOT/lib64 or usr/lib/x86_64-linux-gnu already exists"
+        return 0
+    fi
+    mkdir "$ROOT/lib64" "$ROOT/usr/lib/x86_64-linux-gnu"
+    mount --bind /usr/lib64 "$ROOT/lib64"
+    mount --bind /usr/lib/x86_64-linux-gnu "$ROOT/usr/lib/x86_64-linux-gnu"
+    mount --bind "$cc1" "$ROOT/usr/libexec/gcc/aarch64-linux-gnu/13/cc1"
+    mount --bind /usr/bin/aarch64-linux-gnu-as "$ROOT/usr/bin/aarch64-linux-gnu-as"
+    mount --bind /usr/bin/aarch64-linux-gnu-ld.bfd "$ROOT/usr/bin/aarch64-linux-gnu-ld.bfd"
+    NATIVE_CC_MOUNTS=(usr/bin/aarch64-linux-gnu-ld.bfd usr/bin/aarch64-linux-gnu-as
+        usr/libexec/gcc/aarch64-linux-gnu/13/cc1 usr/lib/x86_64-linux-gnu lib64)
+    echo "  compiling natively with the host's $host_cc cross compiler"
+}
+
+native_cc_off() {
+    local m
+    [ ${#NATIVE_CC_MOUNTS[@]} -gt 0 ] || return 0
+    for m in "${NATIVE_CC_MOUNTS[@]}"; do
+        if mountpoint -q "$ROOT/$m"; then umount -l "$ROOT/$m"; fi
+    done
+    rmdir "$ROOT/usr/lib/x86_64-linux-gnu" "$ROOT/lib64"
+    NATIVE_CC_MOUNTS=()
+}
+
+# DKMS and the DOCA configure script ask `uname -r` which kernel they build for; in a chroot that
+# is the build host's kernel. For the drivers stage, make the chroot's uname report the ISO kernel.
+fake_uname_on() {
+    cat > "$ROOT/usr/local/bin/uname" <<EOF
+#!/bin/sh
+# Build-time only (build_debug_iso.sh): report the ISO kernel $KVER instead of the build host's.
+/usr/bin/uname "\$@" | sed "s/\$(/usr/bin/uname -r)/$KVER/g"
+EOF
+    chmod 755 "$ROOT/usr/local/bin/uname"
+    [ "$(in_chroot uname -r)" = "$KVER" ] || die "uname wrapper does not report $KVER"
+}
+
+fake_uname_off() { rm -f "$ROOT/usr/local/bin/uname"; }
 
 in_chroot() {
     env -u PIP_CONFIG_FILE -u NODE_EXTRA_CA_CERTS \
@@ -185,9 +249,17 @@ Pin-Priority: 1001
 EOF
     apt_in update
 
-    # DOCA first: its dkms, the DOCA-OFED mlx5/RDMA modules (nvidia-peermem builds against them)
-    # and the MFT access driver. doca-ofed-userspace is the userspace half of the doca-ofed profile.
-    apt_in install dkms mlnx-ofed-kernel-dkms kernel-mft-dkms doca-ofed-userspace
+    # Point uname at the ISO kernel and (x86_64 hosts) swap in the native cross compiler before
+    # anything is compiled. On a fresh chroot gcc only arrives with dkms, hence native_cc_on twice.
+    fake_uname_on
+    native_cc_on
+    in_chroot dpkg --configure -a   # finish packages left half-configured by an earlier failed run
+    apt_in install dkms
+    native_cc_on
+
+    # DOCA first: the DOCA-OFED mlx5/RDMA modules (nvidia-peermem builds against them) and the
+    # MFT access driver. doca-ofed-userspace is the userspace half of the doca-ofed profile.
+    apt_in install mlnx-ofed-kernel-dkms kernel-mft-dkms doca-ofed-userspace
     local nv=(
         "nvidia-headless-$NVIDIA_BRANCH-open" "nvidia-utils-$NVIDIA_BRANCH" nvidia-imex libnvidia-nscq
         nvidia-persistenced nvidia-modprobe datacenter-gpu-manager-4-core nvfwupd
@@ -214,6 +286,8 @@ EOF
     expect_version nvfwupd "$NVFWUPD_VERSION"
     in_chroot sh -c 'command -v nvidia-smi && command -v mst && command -v dcgmi && command -v nvfwupd' > /dev/null \
         || die "nvidia-smi, mst, dcgmi or nvfwupd missing"
+    native_cc_off
+    fake_uname_off
     in_chroot update-initramfs -u -k "$KVER"
 }
 
@@ -276,6 +350,7 @@ EOF
     cat "$ROOT/etc/gb300-debug-release"
 
     remove_build_ca
+    fake_uname_off
     rm -f "$ROOT/usr/sbin/policy-rc.d" "$ROOT"/etc/ssh/ssh_host_*
     : > "$ROOT/etc/machine-id"
     rm -f "$ROOT/var/lib/dbus/machine-id"
