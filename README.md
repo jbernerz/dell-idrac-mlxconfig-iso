@@ -24,7 +24,9 @@ after a full power cycle.
 | [`bf3-linktype/bf3_linktype_idrac.py`](bf3-linktype/bf3_linktype_idrac.py) | Fleet tool driven by iDRAC Redfish. `check` and `verify` are read-only. `apply` boots the ISO through virtual media, waits for it to power off, then does a full power cycle. `powercycle` does only the power cycle. |
 | [`bf3-linktype/README.md`](bf3-linktype/README.md) | Full documentation: procedure, options, caveats and what has been tested. |
 | [`dist/`](dist/) | Prebuilt `bf3-eth-arm64.iso` (sets both ports to Ethernet), with its `.sha256` and package `.manifest`. |
-| [`gb300-debug-iso/`](gb300-debug-iso/) | Separate builder for a **GB300 debug live ISO** (Ubuntu 24.04 arm64) with NVIDIA's GB300 NVL72 release 1.0.6 host stack: GPU driver 580.126.20, DOCA-Host 3.2.1-044413, MFT, DCGM, nvfwupd, nvdebug and general debug tools. The ISO itself contains NVIDIA-licensed software, so it isn't published here; see its README. |
+
+The GB300 debug live ISO builder that used to be in this repository has moved to its own:
+[jbernerz/gb300-debug-iso](https://github.com/jbernerz/gb300-debug-iso).
 
 ## Quick start
 
