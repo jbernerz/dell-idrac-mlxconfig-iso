@@ -1,0 +1,12 @@
+[Unit]
+Description=Set BlueField-3 link type to Ethernet, then power off
+After=basic.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/bf3-set-eth.sh
+StandardOutput=journal+console
+StandardError=journal+console
+
+[Install]
+WantedBy=multi-user.target
