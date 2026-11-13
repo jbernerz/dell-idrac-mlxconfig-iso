@@ -38,8 +38,8 @@ BUILD_CA_CERT=${BUILD_CA_CERT:-}
 SSH_AUTHORIZED_KEYS=${SSH_AUTHORIZED_KEYS:-}
 
 BASE_PKGS=(
-    # boot, live system
-    systemd systemd-sysv systemd-resolved systemd-timesyncd udev dbus kmod casper initramfs-tools zstd
+    # boot, live system (apt is Priority: important in Ubuntu, so minbase leaves it out)
+    apt gpgv systemd systemd-sysv systemd-resolved systemd-timesyncd udev dbus kmod casper initramfs-tools zstd
     "linux-image-$KVER" "linux-modules-$KVER" "linux-headers-$KVER" "linux-tools-$KVER" grub-efi-arm64-bin
     # access and networking
     sudo openssh-server openssh-client ca-certificates tzdata iproute2 iputils-ping netbase ethtool
