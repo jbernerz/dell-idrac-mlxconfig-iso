@@ -23,20 +23,23 @@ after a full power cycle.
 | [`bf3-linktype/iso/`](bf3-linktype/iso/) | `build_iso.py` builds a small arm64 UEFI boot ISO (~57 MiB). It contains GRUB, a Debian 13 kernel, busybox and `mstconfig`. The ISO finds every BF3 by PCI ID, sets both ports to Ethernet, checks the result and powers the host off. On failure it stays on with a console shell. |
 | [`bf3-linktype/bf3_linktype_idrac.py`](bf3-linktype/bf3_linktype_idrac.py) | Fleet tool driven by iDRAC Redfish. `check` and `verify` are read-only. `apply` boots the ISO through virtual media, waits for it to power off, then does a full power cycle. `powercycle` does only the power cycle. |
 | [`bf3-linktype/README.md`](bf3-linktype/README.md) | Full documentation: procedure, options, caveats and what has been tested. |
+| [`dist/`](dist/) | Prebuilt `bf3-eth-arm64.iso` (sets both ports to Ethernet), with its `.sha256` and package `.manifest`. |
 
 ## Quick start
 
 ```bash
-# 1. Build the ISO (any Debian/Ubuntu host, x86 or arm64)
-sudo apt install gpg xz-utils dpkg binutils grub-common dosfstools mtools xorriso qemu-user-static
-cd bf3-linktype/iso && ./build_iso.py        # -> bf3-eth-arm64.iso
+# 1. Get the ISO. Either use the prebuilt one and check it:
+(cd dist && sha256sum -c bf3-eth-arm64.iso.sha256)
+#    or build a fresh one on any Debian/Ubuntu host (x86 or arm64):
+#    sudo apt install gpg xz-utils dpkg binutils grub-common dosfstools mtools xorriso qemu-user-static
+#    bf3-linktype/iso/build_iso.py -o bf3-eth-arm64.iso
 
 # 2. Host the ISO on an HTTP server the iDRACs can reach, list the iDRACs in nodes.txt, then:
-cd .. && pip install requests
+pip install requests
 export IDRAC_USER=root IDRAC_PASSWORD='...'
-./bf3_linktype_idrac.py check  -n nodes.txt --insecure
-./bf3_linktype_idrac.py apply  -n canary.txt --insecure --iso-url http://<server>/bf3-eth-arm64.iso
-./bf3_linktype_idrac.py verify -n canary.txt --insecure
+bf3-linktype/bf3_linktype_idrac.py check  -n nodes.txt --insecure
+bf3-linktype/bf3_linktype_idrac.py apply  -n canary.txt --insecure --iso-url http://<server>/bf3-eth-arm64.iso
+bf3-linktype/bf3_linktype_idrac.py verify -n canary.txt --insecure
 # then the remaining nodes with -n nodes.txt
 ```
 
@@ -60,9 +63,13 @@ the ISO's URL.
 
 ## Notes
 
-- The built ISO contains unmodified Debian packages (Linux, GRUB, busybox, mstflint), which are
-  under their own licences, mostly GPL. The exact versions are written to
-  `bf3-eth-arm64.iso.manifest`; matching sources are available from the Debian archive.
-- The ISO is not committed to this repository. Build it with `build_iso.py`.
+- The ISO contains unmodified Debian packages (Linux, GRUB, busybox, mstflint), which are under
+  their own licences, mostly GPL. The exact versions are listed in
+  [`dist/bf3-eth-arm64.iso.manifest`](dist/bf3-eth-arm64.iso.manifest), and the corresponding
+  sources are permanently available from the Debian archive and
+  [snapshot.debian.org](https://snapshot.debian.org/).
+- **The prebuilt ISO in `dist/` is a snapshot** (Debian 13, kernel 6.12.107, mstflint 4.31,
+  built 2026-11-13). It does not pick up later Debian updates, so run `build_iso.py` for a
+  current one. It is the exact image that was boot-tested in QEMU (sha256 `d5f28ced…b734`).
 - Built using Dell's [iDRAC-Redfish-Scripting](https://github.com/dell/iDRAC-Redfish-Scripting)
   XE9712 mockup and NVIDIA's BlueField-3 documentation.

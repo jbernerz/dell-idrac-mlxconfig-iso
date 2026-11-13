@@ -29,6 +29,9 @@ card loads the new value after a full power cycle.
 
 ## The ISO
 
+A prebuilt copy, with its checksum and package manifest, is in [`../dist/`](../dist/). To build a
+fresh one:
+
 ```bash
 sudo apt install gpg xz-utils dpkg binutils grub-common dosfstools mtools xorriso qemu-user-static
 cd iso && ./build_iso.py            # -> bf3-eth-arm64.iso (+ .sha256, .manifest)
