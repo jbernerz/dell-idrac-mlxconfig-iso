@@ -78,6 +78,7 @@ mount_chroot() {
 umount_chroot() {
     local m
     native_cc_off
+    [ -d "$ROOT/usr/local/bin" ] && fake_uname_off
     for m in run dev/pts dev sys proc; do
         if mountpoint -q "$ROOT/$m"; then umount -l "$ROOT/$m"; fi
     done
@@ -246,6 +247,11 @@ Pin-Priority: 1001
 Package: nvfwupd
 Pin: version $NVFWUPD_VERSION
 Pin-Priority: 1001
+
+# MFT must come from the DOCA repo (it matches kernel-mft-dkms); the CUDA repo carries newer ones.
+Package: mft mft-* kernel-mft-dkms
+Pin: origin "linux.mellanox.com"
+Pin-Priority: 1001
 EOF
     apt_in update
 
@@ -259,7 +265,7 @@ EOF
 
     # DOCA first: the DOCA-OFED mlx5/RDMA modules (nvidia-peermem builds against them) and the
     # MFT access driver. doca-ofed-userspace is the userspace half of the doca-ofed profile.
-    apt_in install mlnx-ofed-kernel-dkms kernel-mft-dkms doca-ofed-userspace
+    apt_in install --allow-downgrades mlnx-ofed-kernel-dkms kernel-mft-dkms mft doca-ofed-userspace
     local nv=(
         "nvidia-headless-$NVIDIA_BRANCH-open" "nvidia-utils-$NVIDIA_BRANCH" nvidia-imex libnvidia-nscq
         nvidia-persistenced nvidia-modprobe datacenter-gpu-manager-4-core nvfwupd
