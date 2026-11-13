@@ -1,0 +1,108 @@
+#!/bin/busybox sh
+# /init of the BF3 link-type ISO (built by build_iso.py). Runs as PID 1 from the initramfs.
+#
+# Default: set LINK_TYPE_P1/P2 on every BlueField-3 (PCI 15b3:a2dc) to Ethernet, check the
+# result, power the host off. bf3_linktype_idrac.py treats "host powered itself off" as success.
+# Any failure leaves the host ON with a shell on the console (iDRAC virtual console), so the
+# fleet tool times out on that node instead of reporting success.
+#
+# Kernel command line options (set in the GRUB menu entries):
+#   bf3.link_type=2       2 = Ethernet (default), 1 = InfiniBand
+#   bf3.mode=apply        set, verify, power off (default)
+#   bf3.mode=query        only show current values, then open a shell (no changes)
+#   bf3.mode=selftest     check the tools run, list NVIDIA devices, power off (no changes)
+
+/bin/busybox mkdir -p /proc /sys /dev /tmp /run
+/bin/busybox mount -t proc proc /proc
+/bin/busybox mount -t sysfs sysfs /sys
+/bin/busybox mount -t devtmpfs devtmpfs /dev
+/bin/busybox --install -s /bin
+exec </dev/console >/dev/console 2>&1
+export PATH=/usr/bin:/usr/sbin:/bin:/sbin
+export LD_LIBRARY_PATH=/usr/lib/aarch64-linux-gnu:/usr/lib
+export HOME=/tmp TMPDIR=/tmp
+dmesg -n 3 2>/dev/null
+
+LINK_TYPE=2
+MODE=apply
+for w in $(cat /proc/cmdline); do
+    case "$w" in
+        bf3.link_type=*) LINK_TYPE="${w#*=}" ;;
+        bf3.mode=*)      MODE="${w#*=}" ;;
+    esac
+done
+case "$LINK_TYPE" in 1) WANT="IB(1)" ;; 2) WANT="ETH(2)" ;; *) WANT="" ;; esac
+
+say() { echo "bf3-eth: $*"; }
+
+shell_forever() {
+    say "dropping to a shell. The host stays ON; power it off from iDRAC when done."
+    while true; do setsid cttyhack sh -l; done
+}
+
+fail() {
+    echo
+    say "FAILED: $*"
+    say "nothing was powered off, so the iDRAC tool will flag this node."
+    shell_forever
+}
+
+power_off() {
+    say "$1 - powering off in 5s"
+    sync
+    sleep 5
+    poweroff -f
+}
+
+echo
+say "BlueField-3 link-type ISO, $(cat /etc/bf3-eth-build 2>/dev/null)"
+say "mode=$MODE link_type=$LINK_TYPE"
+[ -n "$WANT" ] || fail "bf3.link_type must be 1 (InfiniBand) or 2 (Ethernet), got '$LINK_TYPE'"
+command -v mstconfig >/dev/null || fail "mstconfig missing from the image"
+
+# Function 0 of every BlueField-3. LINK_TYPE_P1/P2 are per card, so one function per card is enough.
+# Matching on the PCI ID leaves the node's other NVIDIA/Mellanox controllers untouched.
+BDFS=""
+for d in /sys/bus/pci/devices/*; do
+    [ -e "$d/vendor" ] || continue
+    [ "$(cat "$d/vendor")" = 0x15b3 ] && [ "$(cat "$d/device")" = 0xa2dc ] || continue
+    case "${d##*/}" in *.0) BDFS="$BDFS ${d##*/}" ;; esac
+done
+
+if [ "$MODE" = selftest ]; then
+    mstconfig -v || fail "mstconfig does not run"
+    say "NVIDIA/Mellanox PCI functions:"
+    for d in /sys/bus/pci/devices/*; do
+        [ "$(cat "$d/vendor" 2>/dev/null)" = 0x15b3 ] && say "  ${d##*/} $(cat "$d/device")"
+    done
+    say "BlueField-3 cards found:${BDFS:- none}"
+    power_off "selftest done, nothing changed"
+fi
+
+[ -n "$BDFS" ] || fail "no BlueField-3 (15b3:a2dc) found on the PCI bus"
+say "BlueField-3 cards found:$BDFS"
+
+for bdf in $BDFS; do
+    say "$bdf current configuration:"
+    mstconfig -d "$bdf" query LINK_TYPE_P1 LINK_TYPE_P2 \
+        || fail "cannot query $bdf (host privilege restricted from the BF3 Arm side?)"
+done
+
+if [ "$MODE" = query ]; then
+    say "query mode, nothing changed"
+    shell_forever
+fi
+[ "$MODE" = apply ] || fail "unknown bf3.mode '$MODE'"
+
+for bdf in $BDFS; do
+    say "$bdf: setting LINK_TYPE_P1=$LINK_TYPE LINK_TYPE_P2=$LINK_TYPE"
+    mstconfig -d "$bdf" -y set LINK_TYPE_P1="$LINK_TYPE" LINK_TYPE_P2="$LINK_TYPE" || fail "set failed on $bdf"
+    out=$(mstconfig -d "$bdf" query LINK_TYPE_P1 LINK_TYPE_P2) || fail "re-query failed on $bdf"
+    echo "$out"
+    # Each LINK_TYPE line must end with the wanted value (the last column is the next-boot value).
+    # Lines are indented and may start with '*' (value differs from default).
+    n=$(echo "$out" | grep -E '^[[:space:]*]*LINK_TYPE_P[12][[:space:]]' | grep -c "$WANT[[:space:]]*\$")
+    [ "$n" -eq 2 ] || fail "$bdf does not show $WANT for both ports after the set"
+done
+
+power_off "all BlueField-3 cards set to $WANT; a full power cycle makes it take effect"
