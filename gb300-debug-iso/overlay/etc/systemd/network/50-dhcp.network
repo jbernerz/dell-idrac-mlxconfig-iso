@@ -1,0 +1,16 @@
+# DHCP (IPv4 and IPv6) on every Ethernet port, including CX8/BF3 ports in Ethernet mode.
+# Boot does not wait for any of them (systemd-networkd-wait-online is disabled).
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=yes
+IPv6AcceptRA=yes
+LLDP=yes
+EmitLLDP=no
+
+[DHCPv4]
+UseDomains=yes
+
+[Link]
+RequiredForOnline=no

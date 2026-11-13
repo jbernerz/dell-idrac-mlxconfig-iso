@@ -1,0 +1,19 @@
+#!/bin/sh
+# Login banner: installed versions, addresses, common commands.
+cat /etc/gb300-debug-release 2>/dev/null
+echo
+echo "Addresses:"
+ip -br addr show scope global 2>/dev/null | sed 's/^/  /'
+cat <<'EOF'
+
+Commands:
+  nvidia-smi, nvidia-smi -q          GPU state (driver loads automatically when GPUs are present)
+  nvdebug --help                     NVIDIA debug log collector (BMC/out-of-band and host)
+  dcgmi discovery -l                 DCGM (start `nv-hostengine` first)
+  mst start; mst status -v           NVIDIA NICs/DPUs; then flint / mlxlink / mlxconfig -d <dev>
+  ibdev2netdev, ibstat, ibv_devinfo  RDMA devices and ports
+  nvfwupd --help                     NVIDIA firmware update tool
+  gb300-collect                      write a debug bundle (.tar.gz) to /root
+  debug-ssh-password                 allow SSH root login with a one-time password (this boot only)
+This is a live system in RAM: copy anything you need off before rebooting.
+EOF
